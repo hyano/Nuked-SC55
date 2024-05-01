@@ -35,7 +35,6 @@
 
 #include <stdint.h>
 #include "mcu_interrupt.h"
-#include "SDL_atomic.h"
 
 enum {
     DEV_P1DDR = 0x00,
@@ -433,7 +432,7 @@ extern int mcu_st;
 extern int mcu_jv880;
 extern int mcu_scb55;
 
-extern SDL_atomic_t mcu_button_pressed;
+extern uint32_t mcu_button_pressed;
 
 static const uint32_t uart_buffer_size = 8192;
 extern uint32_t uart_write_ptr;
@@ -453,3 +452,9 @@ void MCU_PostUART(uint8_t data);
 
 void MCU_WorkThread_Lock(void);
 void MCU_WorkThread_Unlock(void);
+
+int SC55_Open(void);
+void SC55_Close(void);
+int SC55_SampleFreq(void);
+void SC55_Write(uint8_t data);
+void SC55_Update(int16_t *data);

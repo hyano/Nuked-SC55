@@ -33,8 +33,8 @@
  */
 #include <stdio.h>
 #include <string.h>
-#define SDL_MAIN_HANDLED
-#include "SDL.h"
+#include <stdarg.h>
+#include <windows.h>
 #include "mcu.h"
 #include "mcu_opcodes.h"
 #include "mcu_interrupt.h"
@@ -43,8 +43,22 @@
 #include "lcd.h"
 #include "submcu.h"
 #include "midi.h"
-#include "utf8main.h"
 #include "utils/files.h"
+
+#if 1
+#define printf(...) OutputDebugStringFormat(__VA_ARGS__)
+#define fprintf(stream, ...) OutputDebugStringFormat(__VA_ARGS__)
+#define fflush(stream)
+void OutputDebugStringFormat(const char* format, ...) {
+    char buffer[1024];
+    va_list args;
+    va_start(args, format);
+    vsprintf_s(buffer, sizeof(buffer), format, args);
+    va_end(args);
+    OutputDebugStringA(buffer);
+}
+#endif
+
 
 #if __linux__
 #include <unistd.h>
@@ -124,8 +138,6 @@ static short *sample_buffer;
 static int sample_read_ptr;
 static int sample_write_ptr;
 
-static SDL_AudioDeviceID sdl_audio;
-
 void MCU_ErrorTrap(void)
 {
     printf("%.2x %.4x\n", mcu.cp, mcu.pc);
@@ -150,7 +162,7 @@ static uint8_t ad_nibble = 0x00;
 static uint8_t sw_pos = 3;
 static uint8_t io_sd = 0x00;
 
-SDL_atomic_t mcu_button_pressed = { 0 };
+uint32_t mcu_button_pressed = 0;
 
 uint8_t RCU_Read(void)
 {
@@ -392,7 +404,7 @@ uint8_t MCU_DeviceRead(uint32_t address)
         if (!mcu_jv880) return 0xff;
 
         uint8_t data = 0xff;
-        uint32_t button_pressed = (uint32_t)SDL_AtomicGet(&mcu_button_pressed);
+        uint32_t button_pressed = mcu_button_pressed;
 
         if (io_sd == 0b11111011)
             data &= ((button_pressed >> 0) & 0b11111) ^ 0xFF;
@@ -570,7 +582,7 @@ uint8_t MCU_Read(uint32_t address)
                     LCD_Enable((io_sd & 8) != 0);
 
                     uint8_t data = 0xff;
-                    uint32_t button_pressed = (uint32_t)SDL_AtomicGet(&mcu_button_pressed);
+                    uint32_t button_pressed = mcu_button_pressed;
 
                     if ((io_sd & 1) == 0)
                         data &= 0x80 | (((button_pressed >> 0) & 127) ^ 127);
@@ -925,18 +937,15 @@ void MCU_UpdateUART_TX(void)
 
 static bool work_thread_run = false;
 
-static SDL_mutex *work_thread_lock;
-
 void MCU_WorkThread_Lock(void)
 {
-    SDL_LockMutex(work_thread_lock);
 }
 
 void MCU_WorkThread_Unlock(void)
 {
-    SDL_UnlockMutex(work_thread_lock);
 }
 
+#if 0
 int SDLCALL work_thread(void* data)
 {
     work_thread_lock = SDL_CreateMutex();
@@ -1004,13 +1013,11 @@ int SDLCALL work_thread(void* data)
 
     return 0;
 }
+#endif
 
 static void MCU_Run()
 {
     bool working = true;
-
-    work_thread_run = true;
-    SDL_Thread *thread = SDL_CreateThread(work_thread, "work thread", 0);
 
     while (working)
     {
@@ -1018,11 +1025,9 @@ static void MCU_Run()
             working = false;
 
         LCD_Update();
-        SDL_Delay(15);
     }
 
     work_thread_run = false;
-    SDL_WaitThread(thread, 0);
 }
 
 void MCU_PatchROM(void)
@@ -1043,7 +1048,7 @@ uint8_t MCU_ReadP0(void)
 uint8_t MCU_ReadP1(void)
 {
     uint8_t data = 0xff;
-    uint32_t button_pressed = (uint32_t)SDL_AtomicGet(&mcu_button_pressed);
+    uint32_t button_pressed = mcu_button_pressed;
 
     if ((mcu_p0_data & 1) == 0)
         data &= 0x80 | (((button_pressed >> 0) & 127) ^ 127);
@@ -1094,6 +1099,7 @@ void unscramble(uint8_t *src, uint8_t *dst, int len)
     }
 }
 
+#if 0
 void audio_callback(void* /*userdata*/, Uint8* stream, int len)
 {
     len /= 2;
@@ -1130,20 +1136,20 @@ static const char* audio_format_to_str(int format)
     }
     return "UNK";
 }
+#endif
 
 int MCU_OpenAudio(int deviceIndex, int pageSize, int pageNum)
 {
-    SDL_AudioSpec spec = {};
-    SDL_AudioSpec spec_actual = {};
-
     audio_page_size = (pageSize/2)*2; // must be even
     audio_buffer_size = audio_page_size*pageNum;
-    
+
+#if 0
     spec.format = AUDIO_S16SYS;
     spec.freq = (mcu_mk1 || mcu_jv880) ? 64000 : 66207;
     spec.channels = 2;
     spec.callback = audio_callback;
     spec.samples = audio_page_size / 4;
+#endif
     
     sample_buffer = (short*)calloc(audio_buffer_size, sizeof(short));
     if (!sample_buffer)
@@ -1153,7 +1159,8 @@ int MCU_OpenAudio(int deviceIndex, int pageSize, int pageNum)
     }
     sample_read_ptr = 0;
     sample_write_ptr = 0;
-    
+
+#if 0    
     int num = SDL_GetNumAudioDevices(0);
     if (num == 0)
     {
@@ -1166,7 +1173,7 @@ int MCU_OpenAudio(int deviceIndex, int pageSize, int pageNum)
         printf("Out of range audio device index is requested. Default audio output device is selected.\n");
         deviceIndex = -1;
     }
-    
+
     const char* audioDevicename = deviceIndex == -1 ? "Default device" : SDL_GetAudioDeviceName(deviceIndex, 0);
     
     sdl_audio = SDL_OpenAudioDevice(deviceIndex == -1 ? NULL : audioDevicename, 0, &spec, &spec_actual, 0);
@@ -1191,13 +1198,13 @@ int MCU_OpenAudio(int deviceIndex, int pageSize, int pageNum)
     fflush(stdout);
 
     SDL_PauseAudioDevice(sdl_audio, 0);
+#endif
 
     return 1;
 }
 
 void MCU_CloseAudio(void)
 {
-    SDL_CloseAudio();
     if (sample_buffer) free(sample_buffer);
 }
 
@@ -1287,6 +1294,7 @@ void MIDI_Reset(ResetType resetType)
 
 }
 
+#if 0
 int main(int argc, char *argv[])
 {
     (void)argc;
@@ -1668,4 +1676,318 @@ int main(int argc, char *argv[])
     SDL_Quit();
 
     return 0;
+}
+#endif
+
+
+int SC55_Open(void)
+{
+    std::string basePath;
+
+    int port = 0;
+    int audioDeviceIndex = -1;
+    int pageSize = 512;
+    int pageNum = 32;
+    bool autodetect = true;
+    ResetType resetType = ResetType::NONE;
+
+    romset = ROM_SET_MK2;
+
+    basePath = "./sc55_roms";
+
+    if (autodetect)
+    {
+        for (size_t i = 0; i < ROM_SET_COUNT; i++)
+        {
+            bool good = true;
+            for (size_t j = 0; j < 5; j++)
+            {
+                if (roms[i][j][0] == '\0')
+                    continue;
+                std::string path = basePath + "/" + roms[i][j];
+                auto h = fopen(path.c_str(), "rb");
+                if (!h)
+                {
+                    good = false;
+                    break;
+                }
+                fclose(h);
+            }
+            if (good)
+            {
+                romset = i;
+                break;
+            }
+        }
+        printf("ROM set autodetect: %s\n", rs_name[romset]);
+    }
+
+    mcu_mk1 = false;
+    mcu_cm300 = false;
+    mcu_st = false;
+    mcu_jv880 = false;
+    switch (romset)
+    {
+        case ROM_SET_ST:
+            mcu_st = true;
+            break;
+        case ROM_SET_MK1:
+            mcu_mk1 = true;
+            mcu_st = false;
+            break;
+        case ROM_SET_CM300:
+            mcu_mk1 = true;
+            mcu_cm300 = true;
+            break;
+        case ROM_SET_JV880:
+            mcu_jv880 = true;
+            rom2_mask /= 2; // rom is half the size
+            lcd_width = 820;
+            lcd_height = 100;
+            break;
+        case ROM_SET_SCB55:
+        case ROM_SET_RLP3237:
+            mcu_scb55 = true;
+            break;
+    }
+
+    std::string rpaths[5];
+
+    bool r_ok = true;
+    std::string errors_list;
+
+    for(size_t i = 0; i < 5; ++i)
+    {
+        if (roms[romset][i][0] == '\0')
+        {
+            rpaths[i] = "";
+            continue;
+        }
+        rpaths[i] = basePath + "/" + roms[romset][i];
+        s_rf[i] = fopen(rpaths[i].c_str(), "rb");
+        bool optional = mcu_jv880 && i == 4;
+        r_ok &= optional || (s_rf[i] != nullptr);
+        if(!s_rf[i])
+        {
+            if(!errors_list.empty())
+                errors_list.append(", ");
+
+            errors_list.append(rpaths[i]);
+        }
+    }
+
+    if (!r_ok)
+    {
+        fprintf(stderr, "FATAL ERROR: One of required data ROM files is missing: %s.\n", errors_list.c_str());
+        fflush(stderr);
+        closeAllR();
+        return 1;
+    }
+
+    LCD_SetBackPath(basePath + "/back.data");
+
+    memset(&mcu, 0, sizeof(mcu_t));
+
+
+    if (fread(rom1, 1, ROM1_SIZE, s_rf[0]) != ROM1_SIZE)
+    {
+        fprintf(stderr, "FATAL ERROR: Failed to read the mcu ROM1.\n");
+        fflush(stderr);
+        closeAllR();
+        return 1;
+    }
+
+    size_t rom2_read = fread(rom2, 1, ROM2_SIZE, s_rf[1]);
+
+    if (rom2_read == ROM2_SIZE || rom2_read == ROM2_SIZE / 2)
+    {
+        rom2_mask = rom2_read - 1;
+    }
+    else
+    {
+        fprintf(stderr, "FATAL ERROR: Failed to read the mcu ROM2.\n");
+        fflush(stderr);
+        closeAllR();
+        return 1;
+    }
+
+    if (mcu_mk1)
+    {
+        if (fread(tempbuf, 1, 0x100000, s_rf[2]) != 0x100000)
+        {
+            fprintf(stderr, "FATAL ERROR: Failed to read the WaveRom1.\n");
+            fflush(stderr);
+            closeAllR();
+            return 1;
+        }
+
+        unscramble(tempbuf, waverom1, 0x100000);
+
+        if (fread(tempbuf, 1, 0x100000, s_rf[3]) != 0x100000)
+        {
+            fprintf(stderr, "FATAL ERROR: Failed to read the WaveRom2.\n");
+            fflush(stderr);
+            closeAllR();
+            return 1;
+        }
+
+        unscramble(tempbuf, waverom2, 0x100000);
+
+        if (fread(tempbuf, 1, 0x100000, s_rf[4]) != 0x100000)
+        {
+            fprintf(stderr, "FATAL ERROR: Failed to read the WaveRom3.\n");
+            fflush(stderr);
+            closeAllR();
+            return 1;
+        }
+
+        unscramble(tempbuf, waverom3, 0x100000);
+    }
+    else if (mcu_jv880)
+    {
+        if (fread(tempbuf, 1, 0x200000, s_rf[2]) != 0x200000)
+        {
+            fprintf(stderr, "FATAL ERROR: Failed to read the WaveRom1.\n");
+            fflush(stderr);
+            closeAllR();
+            return 1;
+        }
+
+        unscramble(tempbuf, waverom1, 0x200000);
+
+        if (fread(tempbuf, 1, 0x200000, s_rf[3]) != 0x200000)
+        {
+            fprintf(stderr, "FATAL ERROR: Failed to read the WaveRom2.\n");
+            fflush(stderr);
+            closeAllR();
+            return 1;
+        }
+
+        unscramble(tempbuf, waverom2, 0x200000);
+
+        if (s_rf[4] && fread(tempbuf, 1, 0x800000, s_rf[4]))
+            unscramble(tempbuf, waverom_exp, 0x800000);
+        else
+            printf("WaveRom EXP not found, skipping it.\n");
+    }
+    else
+    {
+        if (fread(tempbuf, 1, 0x200000, s_rf[2]) != 0x200000)
+        {
+            fprintf(stderr, "FATAL ERROR: Failed to read the WaveRom1.\n");
+            fflush(stderr);
+            closeAllR();
+            return 1;
+        }
+
+        unscramble(tempbuf, waverom1, 0x200000);
+
+        if (s_rf[3])
+        {
+            if (fread(tempbuf, 1, 0x100000, s_rf[3]) != 0x100000)
+            {
+                fprintf(stderr, "FATAL ERROR: Failed to read the WaveRom2.\n");
+                fflush(stderr);
+                closeAllR();
+                return 1;
+            }
+
+            unscramble(tempbuf, mcu_scb55 ? waverom3 : waverom2, 0x100000);
+        }
+
+        if (s_rf[4] && fread(sm_rom, 1, ROMSM_SIZE, s_rf[4]) != ROMSM_SIZE)
+        {
+            fprintf(stderr, "FATAL ERROR: Failed to read the sub mcu ROM.\n");
+            fflush(stderr);
+            closeAllR();
+            return 1;
+        }
+    }
+
+    // Close all files as they no longer needed being open
+    closeAllR();
+
+    if (!MCU_OpenAudio(audioDeviceIndex, pageSize, pageNum))
+    {
+        fprintf(stderr, "FATAL ERROR: Failed to open the audio stream.\n");
+        fflush(stderr);
+        return 2;
+    }
+
+    LCD_Init();
+    MCU_Init();
+    MCU_PatchROM();
+    MCU_Reset();
+    SM_Reset();
+    PCM_Reset();
+
+    printf("SC-55 Ready\n");
+
+    return 0;
+}
+
+void SC55_Close(void)
+{
+    MCU_CloseAudio();
+    LCD_UnInit();
+}
+
+int SC55_SampleFreq(void)
+{
+    return (mcu_mk1 || mcu_jv880) ? 64000 : 66207;
+}
+
+void SC55_Write(uint8_t data)
+{
+    MCU_PostUART(data);
+}
+
+void SC55_Update(int16_t *data)
+{
+    for (int i = 0; sample_write_ptr == sample_read_ptr; i++)
+    {
+        if (!mcu.ex_ignore)
+            MCU_Interrupt_Handle();
+        else
+            mcu.ex_ignore = 0;
+
+        if (!mcu.sleep)
+            MCU_ReadInstruction();
+
+        mcu.cycles += 12; // FIXME: assume 12 cycles per instruction
+
+        // if (mcu.cycles % 24000000 == 0)
+        //     printf("seconds: %i\n", (int)(mcu.cycles / 24000000));
+
+        PCM_Update(mcu.cycles);
+
+        TIMER_Clock(mcu.cycles);
+
+        if (!mcu_mk1 && !mcu_jv880 && !mcu_scb55)
+            SM_Update(mcu.cycles);
+        else
+        {
+            MCU_UpdateUART_RX();
+            MCU_UpdateUART_TX();
+        }
+
+        MCU_UpdateAnalog(mcu.cycles);
+
+        if (mcu_mk1)
+        {
+            if (ga_lcd_counter)
+            {
+                ga_lcd_counter--;
+                if (ga_lcd_counter == 0)
+                {
+                    MCU_GA_SetGAInt(1, 0);
+                    MCU_GA_SetGAInt(1, 1);
+                }
+            }
+        }
+    }
+
+    data[0] = sample_buffer[sample_read_ptr + 0];
+    data[1] = sample_buffer[sample_read_ptr + 1];
+    sample_read_ptr = (sample_read_ptr + 2) % audio_buffer_size;
 }

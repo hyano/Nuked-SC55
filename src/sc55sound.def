@@ -1,0 +1,7 @@
+LIBRARY		sc55sound
+DESCRIPTION	"SC-55 Sound Generator"
+EXPORTS
+	SC55Sound_Open		@1
+	SC55Sound_Close		@2
+	SC55Sound_Write		@3
+	SC55Sound_Mix		@4
